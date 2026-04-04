@@ -99,6 +99,12 @@ def main():
     source_locale = args.source_locale or args.source_lang.lower()
     target_locale = args.target_locale or args.target_lang.lower()
 
+    if source_locale == target_locale:
+        print(f"ERROR: source-locale and target-locale are both '{source_locale}'.")
+        print("This would overwrite the source strings, breaking xcstrings key matching.")
+        print("Tip: use --target-locale es-MX --target-lang ES-419 for Spanish.")
+        sys.exit(1)
+
     print("=" * 70)
     print("FIXING LOCALIZATION WITH DEEPL")
     print(f"  xcstrings    : {args.xcstrings}")
