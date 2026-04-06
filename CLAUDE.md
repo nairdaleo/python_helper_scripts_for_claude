@@ -239,3 +239,37 @@ with open(path, "w") as f:
 ```
 
 State values: `"translated"` | `"needs-review"` | `"new"`
+
+---
+
+## Noise Key Cleanup (run before translating)
+
+Xcode's string catalog sync periodically re-adds "noise" keys that have no
+valid Swift symbol: `%@`, `+%@`, `·`, `🌸`, `🔔`, `"%@"`, `· "%@"` etc.
+These come from string interpolation patterns and emoji in Swift source.
+
+**Run this before every translation pass:**
+
+```python
+import json, re
+
+path = "path/to/Localizable.xcstrings"
+with open(path) as f:
+    data = json.load(f)
+
+def swift_identifier(key):
+    cleaned = re.sub(r'[^a-zA-Z0-9]', '', key)
+    return cleaned[0].lower() + cleaned[1:] if cleaned else None
+
+junk = [k for k in data['strings'] if swift_identifier(k) is None]
+for k in junk:
+    del data['strings'][k]
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+print(f"Removed {len(junk)} noise keys: {junk}")
+```
+
+Also watch for symbol collisions (e.g. "No tasks yet" vs "No tasks yet.").
+Fix by standardising the source Swift files to use one consistent string.
