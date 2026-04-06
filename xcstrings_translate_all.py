@@ -99,6 +99,7 @@ def main():
             k: v for k, v in strings.items()
             if source_locale in v.get('localizations', {})
             and locale not in v.get('localizations', {})
+            and v.get('shouldTranslate', True)  # respect Xcode's "Don't Translate" flag
         }
 
         if not needs_translation:

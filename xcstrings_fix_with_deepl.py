@@ -125,10 +125,11 @@ def main():
         locs = entry.get("localizations", {})
         has_source = source_locale in locs
         has_target = target_locale in locs
+        should_translate = entry.get('shouldTranslate', True)  # respect "Don't Translate"
 
         if has_source and has_target:
             complete[key] = entry
-        elif has_source:
+        elif has_source and should_translate:
             source_only[key] = entry
         elif has_target:
             target_only[key] = entry

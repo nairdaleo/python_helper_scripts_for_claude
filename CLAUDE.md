@@ -273,3 +273,23 @@ print(f"Removed {len(junk)} noise keys: {junk}")
 
 Also watch for symbol collisions (e.g. "No tasks yet" vs "No tasks yet.").
 Fix by standardising the source Swift files to use one consistent string.
+
+---
+
+## Respecting "Don't Translate" in Xcode
+
+When a key is marked "Don't Translate" in Xcode's string catalog editor, Xcode writes `"shouldTranslate": false` to the xcstrings entry.
+
+Both `xcstrings_translate_all.py` and `xcstrings_fix_with_deepl.py` now skip keys where `shouldTranslate` is `false`. No action needed — it's automatic.
+
+Example entry:
+```json
+"Settings": {
+  "shouldTranslate": false,
+  "localizations": {
+    "en": { "stringUnit": { "state": "translated", "value": "Settings" } }
+  }
+}
+```
+
+**Note:** Xcode only writes the flag to disk during a full localization sync. If you just marked a key in the editor, close and reopen Xcode (or trigger a build) to flush the flag before running the translation scripts.
