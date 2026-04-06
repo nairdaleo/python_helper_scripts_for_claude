@@ -176,7 +176,7 @@ def main():
             new_entry = dict(entry)
             new_entry["localizations"] = {
                 source_locale: entry["localizations"][source_locale],
-                target_locale: {"stringUnit": {"state": "needs-review", "value": translated}},
+                target_locale: {"stringUnit": {"state": "translated", "value": translated}},
             }
             rebuilt["strings"][key] = new_entry
             print(f"  [{i}] {repr(key)[:60]} → {repr(translated)[:60]}")
