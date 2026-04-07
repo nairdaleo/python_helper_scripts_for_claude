@@ -139,15 +139,23 @@ def main():
         print(f'  Done: {ok} translated, {fail} failed')
 
     # Final count
+    # Keys with shouldTranslate=false are intentionally untranslated — exclude from denominator
     from collections import Counter
+    dont_translate_count = sum(1 for v in strings.values() if not v.get('shouldTranslate', True))
+    effective_total = len(strings) - dont_translate_count
+
     counts = Counter()
     for v in strings.values():
+        if not v.get('shouldTranslate', True):
+            continue  # skip dont-translate keys from counts too
         for loc in v.get('localizations', {}).keys():
             counts[loc] += 1
 
     print('\n── Summary ──')
+    if dont_translate_count:
+        print(f'  ({dont_translate_count} keys marked "Don\'t Translate" excluded)')
     for loc, n in sorted(counts.items()):
-        print(f'  {loc}: {n}/{len(strings)}')
+        print(f'  {loc}: {n}/{effective_total}')
 
     if not args.dry_run:
         with open(args.xcstrings, 'w', encoding='utf-8') as f:
