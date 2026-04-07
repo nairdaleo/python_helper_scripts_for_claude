@@ -38,7 +38,8 @@ def _unprotect(s):
 def deepl_translate(text, api_key, source_lang, target_lang, formality='less'):
     if not text or not text.strip():
         return text
-    protected = _protect(text)
+    # Escape bare & to &amp; — required by DeepL's XML tag handler
+    protected = _protect(text).replace('&', '&amp;')
     params = urllib.parse.urlencode({
         'text': protected,
         'source_lang': source_lang,
@@ -55,7 +56,10 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality='less'):
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
-            return _unprotect(result['translations'][0]['text'])
+            translated = result['translations'][0]['text']
+            # Unescape &amp; back to & (we escaped it before sending)
+            translated = translated.replace('&amp;', '&')
+            return _unprotect(translated)
     except Exception as e:
         print(f'    DeepL error: {e}', file=sys.stderr)
         return None
