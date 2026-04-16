@@ -23,9 +23,11 @@ Check usage at https://www.deepl.com/account/usage
 | `es-MX` | `ES-419` | Latin American Spanish — use this, not `ES` |
 | `en` | `EN` | Source |
 | `pt-BR` | `PT-BR` | Brazilian Portuguese |
-| `fr` | `FR` | French |
+| `fr` | `FR` | French (France) |
+| `fr-CA` | `FR` | Canadian French — DeepL has no fr-CA target; translate as `FR` then do a manual Québécois pass (see below) |
 | `de` | `DE` | German |
 | `ja` | `JA` | Japanese |
+| `ko` | `KO` | Korean — no formality support in DeepL |
 
 **Always use `ES-419` for Mexican Spanish**, not `ES`. DeepL doesn't support `ES-MX` directly.
 
@@ -33,6 +35,36 @@ Check usage at https://www.deepl.com/account/usage
 
 All scripts default to `--formality less` — this gives `tú` form (informal) in Spanish,
 which is correct for Mexican app UI. `usted` form (`--formality more`) is wrong for this context.
+
+DeepL formality support by language:
+- `ES-419`, `DE`, `FR`, `PT-BR`, `JA` — formality supported, use `less`
+- `KO` — **no formality support**; omit the `formality` param entirely or DeepL returns 403
+
+### fr-CA (Québécois French) — manual pass required
+
+DeepL produces France French (`FR`) for both `fr` and `fr-CA`. After machine translation,
+do a manual Québécois vocabulary pass. Key substitutions:
+
+| France French | Québécois French | Notes |
+|---|---|---|
+| appli | app | Québécois universally say "app" |
+| salle de sport | gym | Everyone says "gym" in QC |
+| balaye (swipe) | swipe | Anglicism is accepted and expected |
+| Fixe un objectif | Mets-toi un objectif | More natural QC phrasing |
+| En franchissant l'objectif | Quand tu l'atteins | Natural QC |
+| collecte / recueille | ramasse | QC idiom for "collect data" |
+| arrive | débarque | Punchy QC idiom for a product launch/arrival |
+| tu as | t'as | Conversational elision, normal in QC copy |
+| papier | bout de papier | More natural in context "track on a piece of paper" |
+| Zéro pub | Zéro pub / traçage / nuage | Punchier register for QC audience |
+
+**Tone:** QC marketing copy is more direct and casual than France French. The `tu` form
+is mandatory throughout. Anglicisms like "swipe", "app", "gym", "widget", "tap" are
+all correct and expected — don't replace them with calques.
+
+**fr-FR formality note:** Use `--formality more` (vous) for France French store copy —
+the polite register is conventional for FR app store listings. Use `--formality less`
+(tu) for fr-CA, which is informal by convention.
 
 ---
 
