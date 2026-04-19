@@ -65,11 +65,35 @@ def _extract_dynamic_prefixes(corpus):
     return [m.group(1) for m in pattern.finditer(corpus)]
 
 
+def _key_variants(key):
+    """
+    Return search variants of a key to match against raw Swift source.
+
+    Python's json.load already decodes JSON escape sequences, so the key
+    may contain real newlines or real quote chars. Swift source files have
+    these as escape sequences (\\n, \\"). Generate both forms.
+    """
+    variants = [key]
+    # Real newline (\n char) → literal \\n in Swift source
+    if '\n' in key:
+        variants.append(key.replace('\n', '\\n'))
+    # Real quote (") → escaped \\\" in Swift source strings
+    if '"' in key:
+        variants.append(key.replace('"', '\\"'))
+    # Both substitutions combined
+    if '\n' in key and '"' in key:
+        variants.append(key.replace('\n', '\\n').replace('"', '\\"'))
+    return variants
+
+
 def classify_stale(keys, strings, corpus):
     """
     Return (stale, dynamic_kept) lists.
     - stale: translateable keys with no detectable source reference
     - dynamic_kept: keys kept because of dynamic-prefix or interpolation match
+
+    Primary signal: extractionState == 'stale' set by Xcode itself.
+    Secondary: corpus search (literal, dynamic-prefix, SwiftUI interpolation).
     """
     dynamic_prefixes = _extract_dynamic_prefixes(corpus)
 
@@ -77,8 +101,17 @@ def classify_stale(keys, strings, corpus):
     dynamic_kept = []
 
     for key in keys:
-        # 1. Literal match
-        if key in corpus:
+        entry = strings[key]
+
+        # 0. Xcode already determined this key is stale — trust it immediately
+        if entry.get('extractionState') == 'stale':
+            stale.append(key)
+            continue
+
+        variants = _key_variants(key)
+
+        # 1. Literal match — try all escape variants
+        if any(v in corpus for v in variants):
             continue
 
         # 2. Dynamic prefix match
@@ -86,14 +119,30 @@ def classify_stale(keys, strings, corpus):
             dynamic_kept.append(key)
             continue
 
-        # 3. SwiftUI interpolation: key has specifiers, check if all
-        #    significant literal fragments appear in source
+        # 3. SwiftUI interpolation: strip specifiers, check significant literal
+        #    fragments (>=5 chars) appear in corpus. Try all escape variants of
+        #    each fragment so \n / \" differences don't cause false misses.
+        #    If ALL fragments are too short (<5 chars stripped) we cannot
+        #    reliably determine staleness — treat as indeterminate (kept).
         if SPEC_RE.search(key):
-            parts = SPEC_RE.split(key)
-            significant = [p for p in parts if len(p.strip()) >= 4]
-            if significant and all(p in corpus for p in significant):
+            found_via_interp = False
+            has_significant = False
+            for variant in variants:
+                parts = SPEC_RE.split(variant)
+                significant = [p.strip() for p in parts if len(p.strip()) >= 5]
+                if significant:
+                    has_significant = True
+                    if all(
+                        any(frag_v in corpus for frag_v in _key_variants(p))
+                        for p in significant
+                    ):
+                        found_via_interp = True
+                        break
+            if found_via_interp or not has_significant:
                 dynamic_kept.append(key)
-                continue
+            else:
+                stale.append(key)
+            continue
 
         stale.append(key)
 
@@ -164,9 +213,15 @@ def main():
     print(f"  {source} only          : {len(source_only)}")
     print(f"  {target} only          : {len(target_only)}")
     print(f"  Neither (shouldTranslate=false): {len(neither)}")
+    xcode_stale = [k for k, v in strings.items() if v.get('extractionState') == 'stale']
     print(f"\nTranslation quality:")
     print(f"  Needs review (machine-translated): {len(needs_review)}")
     print(f"  Human-verified                   : {len(has_both) - len(needs_review)}")
+    if xcode_stale:
+        print(f"\n⚠️  Xcode-marked stale (extractionState=stale): {len(xcode_stale)}")
+        for k in sorted(xcode_stale):
+            print(f"    {repr(k)}")
+        print("  Fix: delete these keys from .xcstrings")
 
     if args.show_missing and source_only:
         print(f"\nMissing {target} translation ({len(source_only)} strings):")
