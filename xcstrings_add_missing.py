@@ -35,6 +35,13 @@ import re as _re
 
 _SPEC_RE2 = _re.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 
+# Languages that support formality in the DeepL API.
+# Korean (KO) is notably absent — sending formality to KO returns 403.
+_FORMALITY_SUPPORTED = {
+    'DE', 'ES', 'ES-419', 'FR', 'IT', 'JA', 'NL', 'PL',
+    'PT', 'PT-BR', 'PT-PT', 'RU',
+}
+
 def _protect2(s):
     parts = _SPEC_RE2.split(s)
     out, idx = [], 0
@@ -53,13 +60,16 @@ def translate(text, api_key, source_lang, target_lang, formality="less"):
     """Translate text using DeepL. Returns translated string or None on error.
     Wraps format specifiers in XML tags so DeepL leaves them untouched."""
     protected = _protect2(text)
-    params = urllib.parse.urlencode({
+    params_dict = {
         "text": protected,
         "source_lang": source_lang.upper(),
         "target_lang": target_lang.upper(),
         "tag_handling": "xml",
-        "formality": formality,
-    }).encode()
+    }
+    # Only send formality for languages that support it (e.g. KO does not — returns 403)
+    if target_lang.upper() in _FORMALITY_SUPPORTED:
+        params_dict["formality"] = formality
+    params = urllib.parse.urlencode(params_dict).encode()
 
     req = urllib.request.Request(
         "https://api-free.deepl.com/v2/translate",
@@ -93,6 +103,9 @@ def main():
     parser.add_argument("--strings-file", required=True,
                         help="Python file defining MISSING_STRINGS list")
     parser.add_argument("--source-lang", default="EN", help="Source language code (default: EN)")
+    parser.add_argument("--source-locale", default="en",
+                        help="xcstrings locale key for the source language (default: en). "
+                             "Used to write the English entry alongside the translation.")
     parser.add_argument("--target-lang", default="ES",
                         help="Target language code for DeepL (default: ES). Use ES-419 for Latin American Spanish. "
                              "Use the xcstrings locale key for --locale separately if needed.")
@@ -151,15 +164,25 @@ def main():
             time.sleep(0.15)  # rate limit
 
         if not args.dry_run:
+            # Write BOTH the source (English) and target locales.
+            # Without the source entry, xcstrings_audit.py sees the key as
+            # "target_only" and xcstrings_fix_with_deepl.py will try to
+            # reverse-translate it back to English.
             data["strings"][key] = {
                 "comment": comment,
                 "localizations": {
+                    args.source_locale: {
+                        "stringUnit": {
+                            "state": "translated",
+                            "value": key,  # key == English value by convention
+                        }
+                    },
                     locale_key: {
                         "stringUnit": {
                             "state": "translated",
                             "value": translated,
                         }
-                    }
+                    },
                 },
             }
         added += 1

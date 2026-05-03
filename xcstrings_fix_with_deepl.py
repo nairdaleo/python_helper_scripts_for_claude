@@ -31,6 +31,14 @@ import urllib.parse
 # Format specifier regex — matches %lld, %@, %1$lld, etc.
 _SPEC_RE = re.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 
+# Languages that support formality in the DeepL API.
+# Korean (KO) is notably absent — sending formality to KO returns 403.
+# ES-419 (Latin American Spanish) supports formality just like ES.
+_FORMALITY_SUPPORTED = {
+    'DE', 'ES', 'ES-419', 'FR', 'IT', 'JA', 'NL', 'PL',
+    'PT', 'PT-BR', 'PT-PT', 'RU',
+}
+
 
 def _protect(s):
     """Wrap format specifiers in XML tags so DeepL leaves them untouched.
@@ -50,29 +58,45 @@ def _unprotect(s):
     return re.sub(r'<x id="\d+">(.*?)</x>', r'\1', s)
 
 
-def deepl_translate(text, api_key, source_lang, target_lang, formality="less"):
+def deepl_translate(text, api_key, source_lang, target_lang, formality="less",
+                    max_retries=5, initial_backoff=2.0):
     """Translate text using DeepL. Returns translated string or None on error.
-    Uses tag_handling=xml to protect format specifiers (%lld, %@, etc.)."""
+    Uses tag_handling=xml to protect format specifiers (%lld, %@, etc.).
+    Retries with exponential backoff on 429 (rate limit) and 5xx errors."""
     protected = _protect(text)
-    params = urllib.parse.urlencode({
+    params_dict = {
         "text": protected,
         "source_lang": source_lang.upper(),
         "target_lang": target_lang.upper(),
         "tag_handling": "xml",
-        "formality": formality,
-    }).encode()
+    }
+    if target_lang.upper() in _FORMALITY_SUPPORTED:
+        params_dict["formality"] = formality
+    params = urllib.parse.urlencode(params_dict).encode()
 
-    req = urllib.request.Request(
-        "https://api-free.deepl.com/v2/translate",
-        data=params,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read())
-            return _unprotect(result["translations"][0]["text"])
-    except Exception:
-        return None
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            "https://api-free.deepl.com/v2/translate",
+            data=params,
+            headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+                return _unprotect(result["translations"][0]["text"])
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                wait = initial_backoff * (2 ** attempt)
+                print(f'    DeepL {e.code} — retrying in {wait:.0f}s (attempt {attempt+1}/{max_retries})')
+                time.sleep(wait)
+                continue
+            print(f'    DeepL error: {e}')
+            return None
+        except Exception as e:
+            print(f'    DeepL error: {e}')
+            return None
+    print(f'    DeepL: gave up after {max_retries} retries')
+    return None
 
 
 def main():
@@ -120,6 +144,7 @@ def main():
     complete = {}
     source_only = {}
     target_only = {}
+    passthrough = {}  # shouldTranslate=False with no target — preserve as-is
 
     for key, entry in data["strings"].items():
         locs = entry.get("localizations", {})
@@ -133,17 +158,27 @@ def main():
             source_only[key] = entry
         elif has_target:
             target_only[key] = entry
+        else:
+            # shouldTranslate=False with only source (or empty localizations):
+            # pass through unchanged so we don't silently drop keys from the file.
+            passthrough[key] = entry
 
     print(f"\nCurrent state:")
     print(f"  Complete ({source_locale} + {target_locale}): {len(complete)}")
     print(f"  {source_locale} only: {len(source_only)}")
     print(f"  {target_locale} only: {len(target_only)}")
+    if passthrough:
+        print(f"  Pass-through (shouldTranslate=False): {len(passthrough)}")
 
     rebuilt = dict(data)  # preserve top-level keys like sourceLanguage, version
     rebuilt["strings"] = {}
 
     # Pass through complete strings unchanged
     for key, entry in complete.items():
+        rebuilt["strings"][key] = entry
+
+    # Pass through shouldTranslate=False strings unchanged
+    for key, entry in passthrough.items():
         rebuilt["strings"][key] = entry
 
     # Fill in source for target-only strings
@@ -165,7 +200,7 @@ def main():
             print(f"  [{i}] FAILED: {repr(key)[:60]}")
 
         if i < len(target_only):
-            time.sleep(0.1)
+            time.sleep(0.3)
 
     # Fill in target for source-only strings
     print(f"\nTranslating {len(source_only)} {source_locale}-only strings → {target_locale}...")
@@ -186,7 +221,7 @@ def main():
             print(f"  [{i}] FAILED: {repr(key)[:60]}")
 
         if i < len(source_only):
-            time.sleep(0.1)
+            time.sleep(0.3)
 
     if not args.dry_run:
         with open(args.xcstrings, "w", encoding="utf-8") as f:

@@ -35,34 +35,58 @@ def _protect(s):
 def _unprotect(s):
     return re.sub(r'<x id="\d+">(.*?)</x>', r'\1', s)
 
-def deepl_translate(text, api_key, source_lang, target_lang, formality='less'):
+
+# Languages that support formality in DeepL API.
+# ES-419 (Latin American Spanish) supports formality just like ES.
+# Korean (KO) is notably absent — sending formality to KO returns 403.
+_FORMALITY_SUPPORTED = {'DE', 'ES', 'ES-419', 'FR', 'IT', 'JA', 'NL', 'PL', 'PT', 'PT-BR', 'PT-PT', 'RU'}
+
+def deepl_translate(text, api_key, source_lang, target_lang, formality='less',
+                    max_retries=5, initial_backoff=2.0):
     if not text or not text.strip():
         return text
     # Escape bare & to &amp; — required by DeepL's XML tag handler
     protected = _protect(text).replace('&', '&amp;')
-    params = urllib.parse.urlencode({
+    params_dict = {
         'text': protected,
         'source_lang': source_lang,
         'target_lang': target_lang,
         'tag_handling': 'xml',
         'ignore_tags': 'x',
-        'formality': formality,
-    }).encode()
+    }
+    # Only send formality for languages that support it (e.g. KO does not)
+    if target_lang.upper() in _FORMALITY_SUPPORTED:
+        params_dict['formality'] = formality
+    params = urllib.parse.urlencode(params_dict).encode()
     base = 'https://api-free.deepl.com' if api_key.endswith(':fx') else 'https://api.deepl.com'
-    req = urllib.request.Request(
-        f'{base}/v2/translate', data=params, method='POST',
-        headers={'Authorization': f'DeepL-Auth-Key {api_key}'}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read())
-            translated = result['translations'][0]['text']
-            # Unescape &amp; back to & (we escaped it before sending)
-            translated = translated.replace('&amp;', '&')
-            return _unprotect(translated)
-    except Exception as e:
-        print(f'    DeepL error: {e}', file=sys.stderr)
-        return None
+    req_url = f'{base}/v2/translate'
+
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            req_url, data=params, method='POST',
+            headers={'Authorization': f'DeepL-Auth-Key {api_key}'}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+                translated = result['translations'][0]['text']
+                # Unescape &amp; back to & (we escaped it before sending)
+                translated = translated.replace('&amp;', '&')
+                return _unprotect(translated)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                wait = initial_backoff * (2 ** attempt)
+                print(f'    DeepL {e.code} — retrying in {wait:.0f}s (attempt {attempt+1}/{max_retries})',
+                      file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print(f'    DeepL error: {e}', file=sys.stderr)
+            return None
+        except Exception as e:
+            print(f'    DeepL error: {e}', file=sys.stderr)
+            return None
+    print(f'    DeepL: gave up after {max_retries} retries', file=sys.stderr)
+    return None
 
 def main():
     p = argparse.ArgumentParser()
@@ -139,7 +163,7 @@ def main():
                 fail += 1
                 print(f'  FAILED: {repr(key)[:60]}')
             if i < len(needs_translation):
-                time.sleep(0.05)
+                time.sleep(0.3)
         print(f'  Done: {ok} translated, {fail} failed')
 
     # Final count
