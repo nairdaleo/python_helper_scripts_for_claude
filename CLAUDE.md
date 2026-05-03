@@ -1,4 +1,11 @@
-# Python Helper Scripts — Localization (xcstrings + DeepL)
+# Python Helper Scripts — Localization (xcstrings + DeepL) & Play Store Helpers
+
+## Play Store Tags
+
+The complete, authoritative list of available Google Play Store tags is at:
+`play_store_helpers/play-store-tags.csv`
+
+This is the only set of tags available in the Play Store console — do not suggest tags outside this list. Format is `tag name, category`. Spark (Health & Fitness app) relevant tags: **Activity tracker**, **Health & fitness**, **Meditation**, **Productivity**, **Self-help**, **Sleep**, **Workout**.
 
 Reusable Python scripts for managing Apple `.xcstrings` localization files.
 DeepL free API for machine translation. No third-party packages — stdlib only. Python 3.8+.
@@ -70,9 +77,11 @@ the polite register is conventional for FR app store listings. Use `--formality 
 
 ## Workflow
 
-Recommended order when localizing or after adding new strings:
+**ALWAYS run the probe before any DeepL session.** It costs < 100 characters, takes ~2 s,
+and catches a dead key, a quota surprise, or a specifier bug before you waste 10 000 chars.
 
 ```
+0. xcstrings_deepl_probe.py          ← run BEFORE anything else — verifies key + quota + specifiers
 1. xcstrings_validate_specifiers.py  ← run FIRST and LAST — catches build-breaking bugs
 2. xcstrings_audit.py                ← see coverage stats
 3. xcstrings_add_missing.py          ← add brand-new strings with DeepL
@@ -84,6 +93,61 @@ Recommended order when localizing or after adding new strings:
 ---
 
 ## Scripts
+
+### `xcstrings_deepl_probe.py` 🔍 run before every session
+
+**When to use**: Before any DeepL translation batch — always, no exceptions.
+Verifies the API key is live, checks remaining character quota, and sends a short
+test string (with a `%lld` specifier) to every target language to confirm both
+connectivity and specifier protection are working correctly.
+
+```bash
+python3 xcstrings_deepl_probe.py \
+    --api-key 93d18a72-a06f-4521-a3a2-5aad7ca79ce3:fx \
+    --target-langs ES-419 DE FR JA KO PT-BR \
+    --min-chars 10000
+```
+
+Key flags:
+- `--target-langs` — space-separated DeepL language codes to probe (default: `ES-419`)
+- `--min-chars` — abort threshold; default 10 000. Lower it if your batch is known-small.
+
+Exit code 0 = all clear. Exit code 1 = do not proceed.
+
+What it checks:
+1. **API key validity** — hits `/v2/usage`; catches 403 (bad key) and 456 (quota exceeded) immediately
+2. **Remaining quota** — prints used/limit/remaining; fails if remaining < `--min-chars`
+3. **Test translation per language** — translates `"Hello, world! Ready in %lld seconds."` to each
+   target language and verifies `%lld` survived intact (catches specifier corruption before it
+   poisons a large batch)
+
+Typical output (all clear):
+
+```
+======================================================================
+DEEPL PRE-FLIGHT PROBE
+  API endpoint : https://api-free.deepl.com
+  Target langs : ES-419, DE, FR
+  Min quota    : 10,000 chars required
+======================================================================
+
+[1/2] Checking usage quota...
+  Used      :     12,345 / 500,000 chars  (2.5%)
+  Remaining :    487,655 chars
+  ✓ Quota OK
+
+[2/2] Test translation → ES-419, DE, FR...
+  Source: 'Hello, world! Ready in %lld seconds.'
+  ✓ ES-419   '¡Hola, mundo! Listo en %lld segundos.'
+  ✓ DE       'Hallo, Welt! Fertig in %lld Sekunden.'
+  ✓ FR       'Bonjour, monde ! Prêt dans %lld secondes.'
+
+======================================================================
+RESULT: ✓ All checks passed — safe to start your session.
+======================================================================
+```
+
+---
 
 ### `xcstrings_validate_specifiers.py` ⚠️ run first and last
 **When to use**: Before and after any translation work. Catches format specifier bugs
@@ -325,3 +389,107 @@ Example entry:
 ```
 
 **Note:** Xcode only writes the flag to disk during a full localization sync. If you just marked a key in the editor, close and reopen Xcode (or trigger a build) to flush the flag before running the translation scripts.
+
+---
+
+## `xcstrings_translate_manifest.py` — manifest × all locales in one pass
+
+Fills the gap between the two existing translators:
+
+- `xcstrings_add_missing.py` — one locale at a time, fails on existing keys.
+- `xcstrings_fix_with_deepl.py` — all keys in the catalog, no manifest filter (churns through hundreds of unrelated strings).
+- `xcstrings_translate_manifest.py` — only the keys in your manifest, but to *every* locale you list, in one run.
+
+Use this when you've shipped a feature and Xcode has already extracted the new strings into the catalog (so they exist as keys with no localizations populated). The same `MISSING_STRINGS` manifest format used by `xcstrings_add_missing.py`.
+
+```bash
+python3 xcstrings_translate_manifest.py \
+    --xcstrings Spark/Localizable.xcstrings \
+    --manifest spark_v15_strings.py \
+    --api-key 93d18a72-a06f-4521-a3a2-5aad7ca79ce3:fx \
+    --locales fr-FR=FR fr-CA=FR de-DE=DE ja=JA ko=KO pt-BR=PT-BR \
+    --formality less
+```
+
+Locales are space-separated `xcstrings_locale=DEEPL_LANG` pairs. Formality is auto-skipped for languages where DeepL doesn't support it (KO especially). Use `--dry-run` to preview without writing.
+
+---
+
+## Common DeepL mistranslations Claude should watch for
+
+DeepL is excellent for sentences with context, terrible for short ambiguous UI strings. After every translation pass, audit these specific patterns and override with explicit translations where needed.
+
+### 1. `trial` → translated as legal/court trial in every locale
+
+When the source word "trial" appears alone (e.g. *"What happens after the trial?"*), DeepL invariably picks the legal-courtroom homonym instead of the free-trial period sense.
+
+| Locale | Wrong (DeepL default) | Right (free-trial sense) |
+|---|---|---|
+| es-MX | "después del juicio" | "después de la prueba gratuita" |
+| fr-FR / fr-CA | "après le procès" | "après l'essai gratuit" |
+| de-DE | "nach dem Prozess" | "nach der Testphase" |
+| ja | "裁判が終わったら" | "無料トライアル終了後" |
+| ko | "재판이 끝나면" | "무료 체험이 끝나면" |
+| pt-BR | "depois do julgamento" | "depois do teste gratuito" |
+
+**Fix:** explicit override in the manifest, OR phrase the English source as *"What happens after the free trial?"* — the word "free" is enough context for DeepL to pick the right sense.
+
+### 2. `save` → translated as save-a-file, not save-money
+
+`· save $30` becomes `· guardar $30` (file-save) instead of `· ahorras $30` (money-save) in nearly every locale.
+
+| Locale | Wrong (file save) | Right (money save) |
+|---|---|---|
+| es-MX | "guardar" | "ahorras" |
+| fr-FR / fr-CA | "enregistrer" | "économise" |
+| de-DE | "speichern" | "spare" |
+| ja | "%@を保存" | "%@お得" |
+| ko | "%@ 저장" | "%@ 절약" |
+| pt-BR | "salvar" | "economize" |
+
+**Fix:** explicit override, OR phrase the English source as *"save $30"* in a longer context like *"$2.50/mo · you save $30"* — adding a subject/verb gives DeepL enough disambiguation.
+
+### 3. Brand-style verbs kept verbatim (English)
+
+Short two-word product CTAs like `Restore Pro`, `Reset Tally`, `Open Spark` — DeepL has no concept of the brand and often returns the source string unchanged across all locales because it can't decide which word is the verb.
+
+**Fix:** explicit override per locale, OR use a fuller phrase in the source: `Restore Pro features` instead of `Restore Pro` — DeepL then translates the verb correctly.
+
+### 4. pt-BR output sometimes leaks Continental Portuguese
+
+DeepL's `PT-BR` target generally produces Brazilian Portuguese, but on longer or rarer constructions it can fall back to PT-PT forms. Words/forms to search-and-replace in pt-BR output:
+
+| PT-PT (wrong for BR) | PT-BR (right) |
+|---|---|
+| `teu` / `tua` (your) | `seu` / `sua` |
+| `podes` | `você pode` |
+| `pagaste` | `pagou` |
+| `tu fizeres` | `você fizer` |
+| `tu te ...` (reflexive tu) | `você se ...` |
+
+**Fix:** post-pass search/replace, or explicit override on the offending strings.
+
+### 5. ko: `사용자의` (the user's) reads awkwardly in product UX
+
+DeepL inserts `사용자의` (literal "the user's") wherever the English source has "your" as a possessive on a list of items. In Korean product UX it's idiomatic to drop the second-person possessive entirely on lists.
+
+**Fix:** in the polish pass, remove the leading `사용자의` from KO translations of phrases like *"Your habits, streaks, and history all stay..."* — `습관, 연속 기록, 이용 내역은 모두 그대로 유지됩니다` reads more naturally.
+
+Also: DeepL sometimes renders English `then` as `그 다음` (casual "next thing") in billing copy. Replace with `이후` for a more neutral register.
+
+---
+
+## Recommended translation workflow (updated)
+
+```
+0. xcstrings_deepl_probe.py          ← verify key + quota + specifier protection
+1. xcstrings_validate_specifiers.py  ← catch %la-style bugs before AND after
+2. xcstrings_audit.py                ← see coverage stats per locale
+3. xcstrings_add_missing.py          ← add brand-new keys for ONE locale
+   OR
+   xcstrings_translate_manifest.py   ← translate ONLY manifest keys to ALL locales
+4. xcstrings_fix_with_deepl.py       ← fill ALL remaining gaps in the catalog
+5. Manual override pass              ← fix the 5 systemic mistranslations above
+6. xcstrings_verify.py               ← spot-check translation quality
+7. xcstrings_validate_specifiers.py  ← final check before committing
+```
