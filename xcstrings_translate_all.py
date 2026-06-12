@@ -17,8 +17,25 @@ Usage:
 
 IMPORTANT: Close Xcode before running this script.
 """
+import os
 import argparse, json, re, sys, time
 import urllib.request, urllib.parse
+
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 
 _SPEC_RE = re.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 
@@ -58,13 +75,13 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality='less',
     if target_lang.upper() in _FORMALITY_SUPPORTED:
         params_dict['formality'] = formality
     params = urllib.parse.urlencode(params_dict).encode()
-    base = 'https://api-free.deepl.com' if api_key.endswith(':fx') else 'https://api.deepl.com'
+    base = "https://translator.jendrian.ca"
     req_url = f'{base}/v2/translate'
 
     for attempt in range(max_retries):
         req = urllib.request.Request(
             req_url, data=params, method='POST',
-            headers={'Authorization': f'DeepL-Auth-Key {api_key}'}
+            headers={'Authorization': f'DeepL-Auth-Key {api_key}', "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"}
         )
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -91,7 +108,7 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality='less',
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--xcstrings', required=True)
-    p.add_argument('--api-key', required=True)
+    p.add_argument('--api-key', default=None)
     p.add_argument('--source-locale', default='en')
     p.add_argument('--source-lang', default='EN')
     p.add_argument('--locales', nargs='+', required=True,

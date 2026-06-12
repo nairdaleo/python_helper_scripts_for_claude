@@ -19,6 +19,7 @@ What it does:
   - Strings with both locales: left unchanged.
 """
 
+import os
 import argparse
 import re
 import json
@@ -26,6 +27,22 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 
 
 # Format specifier regex — matches %lld, %@, %1$lld, etc.
@@ -76,9 +93,9 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality="less",
 
     for attempt in range(max_retries):
         req = urllib.request.Request(
-            "https://api-free.deepl.com/v2/translate",
+            "https://translator.jendrian.ca/v2/translate",
             data=params,
-            headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+            headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
         )
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -104,7 +121,7 @@ def main():
         description="Fill missing translations in .xcstrings using DeepL"
     )
     parser.add_argument("--xcstrings", required=True, help="Path to Localizable.xcstrings")
-    parser.add_argument("--api-key", required=True, help="DeepL API key")
+    parser.add_argument("--api-key", default=None, help="DeepL API key")
     parser.add_argument("--source-lang", default="EN",
                         help="DeepL source language code (default: EN)")
     parser.add_argument("--target-lang", default="ES",
@@ -119,6 +136,17 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would change without modifying the file")
     args = parser.parse_args()
+    api_key = args.api_key or _load_key("DEEPL_API_KEY")
+    if not api_key:
+        import sys as _sys
+        print(
+            "ERROR: DeepL API key not found.\n"
+            f"  Add  DEEPL_API_KEY=<key>  to {_KEYS_FILE}\n"
+            "  or pass --api-key KEY on the command line.",
+            file=_sys.stderr,
+        )
+        _sys.exit(1)
+
 
     source_locale = args.source_locale or args.source_lang.lower()
     target_locale = args.target_locale or args.target_lang.lower()

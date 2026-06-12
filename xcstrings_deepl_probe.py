@@ -23,6 +23,7 @@ xcstrings_add_missing.py on any non-trivial batch. It costs < 100 characters
 and takes ~2 seconds.
 """
 
+import os
 import argparse
 import json
 import sys
@@ -49,6 +50,22 @@ _FORMALITY_SUPPORTED = {
 
 # Format specifier protection (same as other scripts)
 import re as _re
+
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 _SPEC_RE = _re.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 
 def _protect(s):
@@ -69,7 +86,7 @@ def _unprotect(s):
 
 def _base_url(api_key):
     """Pick free vs paid endpoint based on key suffix."""
-    return "https://api-free.deepl.com" if api_key.endswith(":fx") else "https://api.deepl.com"
+    return "https://translator.jendrian.ca"
 
 
 def check_usage(api_key):
@@ -77,7 +94,7 @@ def check_usage(api_key):
     url = f"{_base_url(api_key)}/v2/usage"
     req = urllib.request.Request(
         url,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read())
@@ -102,7 +119,7 @@ def test_translate(api_key, target_lang, source_lang="EN"):
     req = urllib.request.Request(
         f"{_base_url(api_key)}/v2/translate",
         data=params,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         result = json.loads(resp.read())
@@ -118,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Pre-flight DeepL probe: check quota + test translation per language"
     )
-    parser.add_argument("--api-key", required=True, help="DeepL API key")
+    parser.add_argument("--api-key", default=None, help="DeepL API key")
     parser.add_argument(
         "--target-langs",
         nargs="+",
@@ -135,6 +152,17 @@ def main():
              "Set lower if your batch is small.",
     )
     args = parser.parse_args()
+    api_key = args.api_key or _load_key("DEEPL_API_KEY")
+    if not api_key:
+        import sys as _sys
+        print(
+            "ERROR: DeepL API key not found.\n"
+            f"  Add  DEEPL_API_KEY=<key>  to {_KEYS_FILE}\n"
+            "  or pass --api-key KEY on the command line.",
+            file=_sys.stderr,
+        )
+        _sys.exit(1)
+
 
     print("=" * 70)
     print("DEEPL PRE-FLIGHT PROBE")

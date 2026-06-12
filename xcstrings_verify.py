@@ -25,6 +25,7 @@ Exit codes:
   1  Some translations had low similarity — worth reviewing.
 """
 
+import os
 import argparse
 import json
 import sys
@@ -34,6 +35,22 @@ import urllib.parse
 
 
 import re as _re3
+
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 _SPEC_RE3 = _re3.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 def _p3(s):
     parts = _SPEC_RE3.split(s); out, i = [], 0
@@ -54,9 +71,9 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality="less"):
         "formality": formality,
     }).encode()
     req = urllib.request.Request(
-        "https://api-free.deepl.com/v2/translate",
+        "https://translator.jendrian.ca/v2/translate",
         data=params,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -79,7 +96,7 @@ def main():
         description="Verify .xcstrings translations against DeepL"
     )
     parser.add_argument("--xcstrings", required=True, help="Path to Localizable.xcstrings")
-    parser.add_argument("--api-key", required=True, help="DeepL API key")
+    parser.add_argument("--api-key", default=None, help="DeepL API key")
     parser.add_argument("--source-locale", default="en",
                         help="xcstrings locale key for source language (default: en)")
     parser.add_argument("--target-locale", default="es-MX",
@@ -93,6 +110,17 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.5,
                         help="Minimum word-overlap similarity to pass (default: 0.5)")
     args = parser.parse_args()
+    api_key = args.api_key or _load_key("DEEPL_API_KEY")
+    if not api_key:
+        import sys as _sys
+        print(
+            "ERROR: DeepL API key not found.\n"
+            f"  Add  DEEPL_API_KEY=<key>  to {_KEYS_FILE}\n"
+            "  or pass --api-key KEY on the command line.",
+            file=_sys.stderr,
+        )
+        _sys.exit(1)
+
 
     with open(args.xcstrings, "r", encoding="utf-8") as f:
         data = json.load(f)

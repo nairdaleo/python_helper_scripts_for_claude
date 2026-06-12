@@ -56,6 +56,7 @@ Exit codes: 0 on success (even if some pairs failed individually);
 1 on argument or manifest errors.
 """
 
+import os
 import argparse
 import importlib.util
 import json
@@ -65,8 +66,24 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate"
-DEEPL_PAID_URL = "https://api.deepl.com/v2/translate"
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+
+DEEPL_FREE_URL = "https://translator.jendrian.ca/v2/translate"
+DEEPL_PAID_URL = "https://translator.jendrian.ca/v2/translate"
 
 # DeepL languages that accept the `formality` parameter as of 2026.
 # Korean (KO) is notably absent — sending formality to KO returns 403.
@@ -114,7 +131,7 @@ def deepl_translate(text, api_key, source_lang, target_lang, formality, endpoint
     req = urllib.request.Request(
         endpoint,
         data=body,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())
@@ -153,7 +170,7 @@ def main():
                    help="Path to the .xcstrings catalog to update in place.")
     p.add_argument("--manifest", required=True, type=Path,
                    help="Python file defining MISSING_STRINGS list.")
-    p.add_argument("--api-key", required=True,
+    p.add_argument("--api-key", default=None,
                    help="DeepL API key. Use DEEPL_API_KEY env var if you prefer.")
     p.add_argument("--locales", required=True, nargs="+",
                    help="Space-separated 'xcstrings_locale=DEEPL_LANG' pairs.")

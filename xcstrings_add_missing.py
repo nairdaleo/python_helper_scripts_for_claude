@@ -22,6 +22,7 @@ When Claude uses this script:
 3. Run this script to add them with DeepL translations.
 """
 
+import os
 import argparse
 import importlib.util
 import json
@@ -32,6 +33,22 @@ import urllib.parse
 
 
 import re as _re
+
+
+_KEYS_FILE = os.path.expanduser("~/gitworks/me/.tastyjam-keys.env")
+
+def _load_key(name: str) -> str | None:
+    """Read a KEY=value entry from the central keys file."""
+    if not os.path.exists(_KEYS_FILE):
+        return None
+    with open(_KEYS_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith(f"{name}="):
+                return _line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 
 _SPEC_RE2 = _re.compile(r'(%(?:\d+\$)?(?:hh|h|ll|l|q|z|t|j)?[diouxXeEfFgGaAcsSp@])')
 
@@ -72,9 +89,9 @@ def translate(text, api_key, source_lang, target_lang, formality="less"):
     params = urllib.parse.urlencode(params_dict).encode()
 
     req = urllib.request.Request(
-        "https://api-free.deepl.com/v2/translate",
+        "https://translator.jendrian.ca/v2/translate",
         data=params,
-        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}", "CF-Access-Client-Id": os.environ.get("CF_ACCESS_CLIENT_ID", ""), "CF-Access-Client-Secret": os.environ.get("CF_ACCESS_CLIENT_SECRET", ""), "User-Agent": "tj-translate/1.0"},
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -99,7 +116,7 @@ def load_strings_file(path):
 def main():
     parser = argparse.ArgumentParser(description="Add missing strings to .xcstrings with DeepL")
     parser.add_argument("--xcstrings", required=True, help="Path to Localizable.xcstrings")
-    parser.add_argument("--api-key", required=True, help="DeepL API key")
+    parser.add_argument("--api-key", default=None, help="DeepL API key")
     parser.add_argument("--strings-file", required=True,
                         help="Python file defining MISSING_STRINGS list")
     parser.add_argument("--source-lang", default="EN", help="Source language code (default: EN)")
@@ -115,6 +132,17 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would be added without modifying the file")
     args = parser.parse_args()
+    api_key = args.api_key or _load_key("DEEPL_API_KEY")
+    if not api_key:
+        import sys as _sys
+        print(
+            "ERROR: DeepL API key not found.\n"
+            f"  Add  DEEPL_API_KEY=<key>  to {_KEYS_FILE}\n"
+            "  or pass --api-key KEY on the command line.",
+            file=_sys.stderr,
+        )
+        _sys.exit(1)
+
 
     locale_key = args.locale or args.target_lang.lower()
 
